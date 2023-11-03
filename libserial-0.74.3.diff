@@ -1,0 +1,112 @@
+Adapted from https://sourceforge.net/p/dosbox/patches/288/ by Jacek Ozimek
+--- src/hardware/serialport/libserial.cpp.orig	2019-06-25 04:49:48.000000000 -0300
++++ src/hardware/serialport/libserial.cpp	2023-11-01 18:46:04.877909530 -0300
+@@ -258,13 +258,15 @@
+ 
+ #include <string.h> // strlen
+ #include <stdlib.h>
+-
+-#include <termios.h>
++#include <sys/ioctl.h>
+ #include <unistd.h>
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+-#include <sys/ioctl.h>
++
++#include <asm/ioctl.h>
++//#include <asm/termios.h>
++#include <asm/termbits.h>
+ 
+ #include <errno.h>
+ #include <fcntl.h>
+@@ -273,7 +275,7 @@
+ struct _COMPORT {
+ 	int porthandle;
+ 	bool breakstatus;
+-	termios backup;
++	termios2 backup;
+ };
+ 
+ bool SERIAL_open(const char* portname, COMPORT* port) {
+@@ -295,12 +297,12 @@
+ 	cp->porthandle = open (extended_portname, O_RDWR | O_NOCTTY | O_NONBLOCK);
+ 	if (cp->porthandle < 0) goto cleanup_error;
+ 
+-	result = tcgetattr(cp->porthandle,&cp->backup);
+-	if (result == -1) goto cleanup_error;
++	result = ioctl(cp->porthandle, TCGETS2, &cp->backup);
++	if (result < 0) goto cleanup_error;
+ 
+ 	// get port settings
+-	termios termInfo;
+-	memcpy(&termInfo,&cp->backup,sizeof(termios));
++	termios2 termInfo;
++	memcpy(&termInfo,&cp->backup,sizeof(termios2));
+ 
+ 	// initialize the port
+ 	termInfo.c_cflag = CS8 | CREAD | CLOCAL; // noparity, 1 stopbit
+@@ -310,8 +312,8 @@
+ 	termInfo.c_cc[VMIN] = 0;
+ 	termInfo.c_cc[VTIME] = 0;
+ 
+-	tcflush (cp->porthandle, TCIFLUSH);
+-	tcsetattr (cp->porthandle, TCSANOW, &termInfo);
++	ioctl(cp->porthandle, TCFLSH, TCIFLUSH);
++	ioctl(cp->porthandle, TCSETS2, &termInfo);
+ 
+ 	*port = cp;
+ 	return true;
+@@ -323,9 +325,9 @@
+ }
+ 
+ void SERIAL_close(COMPORT port) {
+-	// restore original termios, close handle, free the COMPORT struct
++	// restore original termios2, close handle, free the COMPORT struct
+ 	if (port->porthandle >= 0) {
+-		tcsetattr(port->porthandle, TCSANOW, &port->backup);
++		ioctl(port->porthandle, TCSETS2, &port->backup);
+ 		close(port->porthandle);
+ 	}
+ 	free(port);
+@@ -402,9 +404,9 @@
+ bool SERIAL_setCommParameters(COMPORT port,
+ 			int baudrate, char parity, int stopbits, int length) {
+ 	
+-	termios termInfo;
+-	int result = tcgetattr(port->porthandle, &termInfo);
+-	if (result==-1) return false;
++	termios2 termInfo;
++	int result = ioctl(port->porthandle, TCGETS2, &termInfo);
++	if (result<0) return false;
+ 	termInfo.c_cflag = CREAD | CLOCAL;
+ 
+ 	// parity
+@@ -449,13 +451,22 @@
+ 		case    600: posix_baudrate = B600; break;
+ 		case    300: posix_baudrate = B300; break;
+ 		case    110: posix_baudrate = B110; break;
+-		default: return false;
++		default: break;
+ 	}
+-	cfsetospeed (&termInfo, posix_baudrate);
+-	cfsetispeed (&termInfo, posix_baudrate);
+ 
+-	int retval = tcsetattr(port->porthandle, TCSANOW, &termInfo);
+-	if(retval==-1) return false;
++	if(posix_baudrate) {
++		termInfo.c_cflag &= ~CBAUD;
++		termInfo.c_cflag |= posix_baudrate;
++	} else {
++		termInfo.c_cflag &= ~CBAUD;
++		termInfo.c_cflag |= BOTHER;
++		termInfo.c_ispeed = baudrate;
++		termInfo.c_ospeed = baudrate;
++	}
++
++	result = ioctl(port->porthandle, TCSETS2, &termInfo);
++	if(result<0) return false;
++
+ 	return true;
+ }
+ 
