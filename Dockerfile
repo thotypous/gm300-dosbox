@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /dosbox /dosbox
 COPY --from=build /gm300 /gm300
+COPY GM300.CFG /gm300/GM300.CFG
 WORKDIR /root/.dosbox
 COPY dosbox-0.74-3.conf .
 WORKDIR /root
